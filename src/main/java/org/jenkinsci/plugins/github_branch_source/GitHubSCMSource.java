@@ -1755,11 +1755,26 @@ public class GitHubSCMSource extends AbstractGitSCMSource {
 
             // Merge PR jobs always merge against the most recent base branch commit they can detect.
             // For an invalid merge_commit_sha, we need to query for most recent base commit separately
-            if (mergeHash == null) {
-                baseHash = ghRepository
+            if (!PullRequestSCMRevision.NOT_MERGEABLE_HASH.equals(mergeHash)) {
+                String currentBaseHash = ghRepository
                         .getRef("heads/" + pr.getBase().getRef())
                         .getObject()
                         .getSha();
+                // GitHub does not regenerate merge_commit_sha when only the base branch advances
+                if (mergeHash != null && !currentBaseHash.equals(baseHash)) {
+                    listener.getLogger()
+                            .format(
+                                    "Pull request %s : github merge_commit_sha %s is based on %s, not the current %s head %s.%n",
+                                    pr.getNumber(),
+                                    mergeHash,
+                                    baseHash,
+                                    pr.getBase().getRef(),
+                                    currentBaseHash);
+                    mergeHash = null;
+                }
+                if (mergeHash == null) {
+                    baseHash = currentBaseHash;
+                }
             }
         }
 

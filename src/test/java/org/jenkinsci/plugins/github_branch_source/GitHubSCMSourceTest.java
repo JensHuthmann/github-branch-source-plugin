@@ -448,6 +448,54 @@ public class GitHubSCMSourceTest extends GitSCMSourceBase {
     }
 
     @Test
+    public void fetchSmokes_staleMergeCommit() throws Exception {
+        // master has moved on since GitHub computed the merge commit of PR 2,
+        // so PR 2 is merged with the current master instead
+        githubApi.stubFor(get(urlMatching("(/api/v3)?/repos/cloudbeers/yolo/git/refs/heads/master"))
+                .atPriority(1)
+                .willReturn(aResponse()
+                        .withStatus(200)
+                        .withHeader("Content-Type", "application/json; charset=utf-8")
+                        .withBody("{\"ref\": \"refs/heads/master\", \"object\": "
+                                + "{\"sha\": \"a5c2f3c6e5f4b8d1e7f0a9b8c7d6e5f4a3b2c1d0\", \"type\": \"commit\"}}")));
+
+        SCMHeadObserver.Collector collector = SCMHeadObserver.collect();
+        source.fetch(
+                new SCMSourceCriteria() {
+                    @Override
+                    public boolean isHead(@NonNull Probe probe, @NonNull TaskListener listener) throws IOException {
+                        return probe.stat("README.md").getType() == SCMFile.Type.REGULAR_FILE;
+                    }
+                },
+                collector,
+                null,
+                null);
+        Map<String, SCMHead> byName = new HashMap<>();
+        Map<String, SCMRevision> revByName = new HashMap<>();
+        for (Map.Entry<SCMHead, SCMRevision> h : collector.result().entrySet()) {
+            byName.put(h.getKey().getName(), h.getKey());
+            revByName.put(h.getKey().getName(), h.getValue());
+        }
+
+        assertThat(
+                revByName.get("PR-2"),
+                is(new PullRequestSCMRevision(
+                        (PullRequestSCMHead) (byName.get("PR-2")),
+                        "a5c2f3c6e5f4b8d1e7f0a9b8c7d6e5f4a3b2c1d0",
+                        "c0e024f89969b976da165eecaa71e09dc60c3da1",
+                        null)));
+        assertThat(((PullRequestSCMRevision) revByName.get("PR-2")).getMergeHash(), nullValue());
+
+        assertThat(
+                revByName.get("PR-3"),
+                is(new PullRequestSCMRevision(
+                        (PullRequestSCMHead) (byName.get("PR-3")),
+                        "8f1314fc3c8284d8c6d5886d473db98f2126071c",
+                        "c0e024f89969b976da165eecaa71e09dc60c3da1",
+                        PullRequestSCMRevision.NOT_MERGEABLE_HASH)));
+    }
+
+    @Test
     public void fetchSmokes_badTarget() throws Exception {
         // make it so the merge commit is not found returns 404
         // Causes PR 2 to fall back to null merge_commit_sha
